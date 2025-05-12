@@ -1,0 +1,145 @@
+---
+title: | 
+  Berkeley Workshop in Formal Demography   
+  Pre-workshop Exercises: Fertility Tempo and Quantum
+author: Ayesha S. Mahmud 
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(ggplot2)
+require(dplyr)
+require(cowplot)
+```
+
+Let's take a look at fertility rates in the U.S. from 1933 to 2010 from the Human Fertility Database. We will be comparing period fertility rates (for that time period) with cohort fertility rates for cohorts that were having children during that time period. 
+
+Some questions to consider: Why do period TFR and cohort completed family size differ? What's the impact of changes in the timing of births on period TFR?
+
+```{r, warning = FALSE}
+# reading in the data
+dat=read.table("USAasfrRR.txt", skip=2, header=T) %>%
+  mutate(Age = as.numeric(as.character(Age)),
+         Year = as.numeric(as.character(Year))) %>%
+  filter(Age > 13 & Age < 49)
+```
+
+Let's look at fertility rates by age group for specific years.
+
+```{r}
+
+ggplot(dat %>% filter (Year %in% c(1933, 1958, 2010))) + 
+  geom_line(aes(x = Age, y = ASFR, col = as.factor(Year))) +
+  labs(col = "Year")
+
+```
+
+Looks like both the timing of childbearing and total fertility rates have been changing over time. The period TFR increases from 1933 to 1958, and then decreases.
+
+Let's look at the age-specific fertility rates over time for particular age groups.
+
+```{r}
+ggplot(dat %>% filter(Age %in% c(20, 30, 40))) + 
+  geom_line(aes(x = Year, y = ASFR, col = as.factor(Age))) +
+  labs(col = "Age")
+
+
+```
+
+Let's compute the period TFR and the mean age of childbearing for all years.
+
+
+```{r}
+periods <- dat %>% group_by(Year) %>% summarize(tfr = sum(ASFR),
+                                                mac = weighted.mean(Age, ASFR))
+p1 <- ggplot(periods, aes(Year, tfr)) + geom_line() + ggtitle("Period TFR")
+p2 <- ggplot(periods, aes(Year, mac)) + geom_line() + ggtitle("Period MAC")
+plot_grid(p1,p2)
+```
+
+We see that the low fertility up until 1940 was followed by the famous baby boom, while period mean age of childbearing declined steadily during this period (except for a blip after the war). From mid-1970s onwards, period TFR increases from below replacement-level to above, and period mean age of childbearing increases steadily.
+
+
+Let's construct the cohorts from these data and plot the cohort completed family size (cohort TFR) against the TFR.
+
+```{r}
+#look at cohorts from 1920 (aged 13 in 1933) up to the 1960 cohort (aged 50 in 2010)
+dat <- dat %>% mutate(Cohort = as.numeric(Year) - as.numeric(Age) + 0.5)
+cohorts <- filter(dat, Cohort >= 1920, Cohort <= 1960) %>%  group_by(Cohort) %>%
+  summarize(tfr = sum(ASFR), mac = weighted.mean(Age, ASFR))
+
+c1 <- ggplot(cohorts, aes(Cohort, tfr)) + 
+  geom_line() + ggtitle("Cohort TFR")
+c2 <- ggplot(cohorts, aes(Cohort, mac)) + 
+  geom_line() + ggtitle("Cohort MAC")
+plot_grid(c1,c2)
+```
+
+Looks like the mean age for period fertility is noisier than cohort fertility but has a smaller range. Period TFR has a wider range than cohort TFR, but mean age of fertility in period has smaller range than for cohort.
+
+Now, let's plot the period TFR along with the cohort TFR for cohort who were at the mean age of childbearing during that period.
+
+```{r}
+cohorts <- mutate(cohorts, Year = Cohort + mac)
+ggplot(periods,aes(Year,tfr)) + geom_line() + 
+  geom_line(aes(Year,tfr), data=cohorts %>% filter(Cohort <= 1960), linetype=2) +
+  ggtitle("U.S. Cohort and Period Total Fertility Rates")
+```
+
+Looks like the cohort TFR is less "variable" than period TFR. When CFS increases, TFR increases but faster. When CFS decreases, TFR decreases but faster. In some ways, TFR "exaggerates" or amplifies trends in CFS. Period TFR is obviously sensitive to the level (quantum) of fertility, but also (not so obviously) the timing of when women have their kids (tempo).
+
+We see that period fertility was lower than cohort fertility when the cohorts were delaying childbearing, and higher than cohort fertility when the cohorts moved childbearing to younger ages, leading to the babyboom. This, of course, is exactly what one would expect from first principles.
+
+There are a number of ways demographers try to correct for this so that changes in the timing of births do not give a misleading idea of what future fertility may be. The largest part of fertility changes are due to the level, but a non-negligible component of the change can be due to changing timing, independent of the level.
+
+In the textbook, Prof. Wachter gives an example for France. Between 1980 and 1985, the period TFR was low at around 1.9 and the mean age of fertility was increasing rapidly. In the example, a "tempo-adjusted" or "timing-standardized" TFR would have been higher than 1.9 (in fact, higher than replacement-level TFR).
+
+The tempo-adjusted TFR "shrinks" the period TFR when age of fertility is falling and "expands" the period TFR when the age of fertility is rising. 
+
+How does it do that? Is there a relationship between the mean age of fertility (either period or cohort) and the level of fertility (either the TFR or the CFS)? 
+
+Yes! Norman Ryder came up with a translation between period TFR and cohort TFR (for cohorts at the mean age of childbearing during that period).
+
+
+Ryder shows that (and we will do this during the workshop), to a first order of approximation, the ratio of period to cohort TFR’s is given by one minus the first derivative of cohort mean age of childbearing, so
+
+$$ TFR_c(t-\mu) \approx \frac{TFR_p(t)}{1-\mu'_c(t-\mu)} $$
+
+with all cohort quantities evaluated for the cohort reaching its mean of childbearing in the period of interest. We can easily test how well this works, bearing in mind that a first order approximation will be exact only if the rates change linearly over time.
+
+We need a way to compute numerical derivatives. One way to do this is to estimate the derivative at time \(t\) by averaging changes between \(t-1\) and \(t\) and between \(t\) and \(t+1\), which works out to be the same as half the change between \(t-1\) and \(t+1\).
+
+
+
+```{r}
+# define function for getting the time derivative of the cohort mean age of childbearing
+nder <- function(v) {
+   n <- length(v)
+   c(NA, (v[3:n] - v[1:(n-2)])/2, NA)
+}
+
+#use this function to compute the derivative of the cohort mean ages of childbearing
+
+cohorts <- mutate(cohorts, rc = nder(mac))
+
+
+temp <- full_join(periods %>% mutate(Year = round(Year)), cohorts %>% mutate(Year = round(Year)), by = "Year")
+temp <- mutate(temp, tfr_adj = tfr.x / (1 - rc))
+
+
+ggplot(temp,aes(Year,tfr.x)) + geom_line() + #unadjusted period TFR
+  geom_line(aes(Year,tfr.y), data=temp %>% filter(Cohort <= 1960), col = "red")  + #cohort TFR or completed family size
+  geom_line(aes(Year,tfr_adj), data=temp %>% filter(!is.na(rc) & Cohort <= 1960), col = "blue") + #adjusted period TFR
+  ggtitle("Ryder's Demograhic Translation")
+
+
+
+
+```
+
+The translation seems to be working, i.e. its getting period TFR closer to the cohort TFR. 
+
+During the workshop, we will look at other ways to estimate a tempo-adjusted period TFR using only period data rather than cohort data (which requires waiting for cohorts to complete childbearing).
