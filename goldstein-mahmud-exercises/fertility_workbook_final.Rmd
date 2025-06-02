@@ -750,7 +750,7 @@ Here's a plot of TFR in a number of HFD countries. Pick one of these
 countries to analyze. 
 
 ```{r}
-dt <- fread("~/Downloads/asfrRR.txt")
+dt <- fread("./asfrRR.txt")
 
 tfr.dt <- dt[Year %in% 2008:2023, .(tfr = sum(ASFR)), by = .(Code, Year)]
 
