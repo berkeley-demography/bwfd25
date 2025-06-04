@@ -1,0 +1,867 @@
+---
+title: "Dynamic Fertility Modeling Exercises"
+subtitle: "Berkeley Formal Demography Workshop"
+author: "Joshua Goldstein, Ayesha Mahmud, Paige Park"
+output:
+  html_document:
+    df_print: paged
+fontsize: 12pt
+---
+
+## (Note: This is spline version, need to change the get_fat functions)
+
+## Goals
+
+These are the in-class exercises we'll be doing for our special
+emphasis on fertility (Wednesday). 
+
+In the exercises, we'll focus on US fertility since the Great
+Recession, 2008-2023. 
+
+For your group project, you'll pick a different country from the Human
+Fertility Database.
+
+We're going to do 3 exercises:
+
+1. Period-cohort translation (a la Ryder)
+
+2. Period shift modeling (a la Bongaarts and Feeney)
+
+3. Cohort shift modeling (a la Goldstein and Cassidy)
+
+## 0. Preliminaries
+
+Read in some packages and custom functions
+
+```{r}
+library(data.table)
+source("utility_functions.R")
+source("tempo_functions.R")
+```
+
+Read in data
+
+```{r}
+dt <- fread("asfrRR.txt")
+dt <- dt[Code == "USA"] ## restrict to USA
+```
+
+Let's convert to matrix format f(a,t): fertility rates by 
+age (rows) and time (columns)
+
+```{r}
+fat_all <- dt[, xtabs(ASFR ~ Age + Year)] ## create the matrix
+tfr <- colSums(fat_all)
+plot(names(tfr), tfr, ylim = c(1, 4), xlab = "Period", ylab = "TFR")
+abline(v = 2008, lty = 2)
+grid()
+title("USA Period Total Fertility, since 1933")
+```
+
+You can see that since Great Recession, period fertility has been steadily
+declining -- from about 2.2 in 2008 to about 1.6 in 2023.
+
+For convenience we're going to limit ourselves to the period since
+2008 and to ages 16-42. (Not much fertility occurs outside these ages,
+so we're not missing much of the story.)
+
+```{r}
+## recreate smaller matrix
+fat <- dt[Year >= 2008 & Age %in% 16:42, xtabs(ASFR ~ Age + Year)] 
+tfr <- colSums(fat)
+year <- as.numeric(colnames(fat))
+plot(year, tfr, lty = 1, type = 'o', ylim = c(1.5,2.5), 
+     xlab = "Period", ylab = "TFR")
+grid()
+title("USA Period Total Fertility, since 2008")
+```
+
+A big decline. 
+
+* What happened about 2010 besides Great Recession? Hint: Obamacare.
+* What happened from 2015 to 2019? 
+* What happened in 2020?
+* Has fertility stabilized, or would you expect continued decline?
+
+
+### Explore the age-specific data
+
+Now let's look at the changing age-specific rates
+
+#### Changing age-specific rates
+
+Time trend by age
+
+```{r}
+par(mfrow = c(1,1))
+my_ages = paste(seq(18, 42, 6))
+matplot(colnames(fat), t(fat[my_ages,]), type = 'l',
+        ylab = "ASFR",
+        xlab = "Period",
+        main = "Age-specific fertility over time")
+text(colnames(fat)[10], fat[my_ages,10], my_ages, col = 1:5)
+```
+
+* For which ages is fertility increasing?
+* For which ages is fertility decreasing?
+* Is this what you would expect if the whole age specific fertility 
+  curve were shifting to older ages?
+
+Age pattern by time
+
+```{r}
+my_periods = paste(seq(2008, 2023, 7))
+matplot(rownames(fat), fat[,my_periods], type = 'l',
+        lty = 1:3,
+        col = "black",
+        ylab = "ASFR",
+        xlab = "Age",
+        main = "Age-specific fertility schedules over time")
+text(rownames(fat)[10], fat[10, my_periods], my_periods)
+```
+
+* What do you think about the age-pattern of fertility change?
+* Does this look like only an age shift to the right or do you think 
+  there's also been a level change?
+
+### Changing mean ages?
+
+```{r}
+mt <- apply(fat, 2, get.mean)
+plot(names(mt), mt, type = 'o',
+     ylim = c(25, 30), xlab = "Period", ylab = "Mean age")
+title("Period mean ages over time")
+grid()
+```
+
+* Do you think it's the mean age itself or the rate of change in the mean age 
+  that should affect the level of period fertility?
+
+```{r}
+mt.prime <- rt <- center.diff(mt, end.fill = TRUE)
+plot(names(mt.prime), mt.prime, type = "p",
+     ylim = c(0,.3), xlab = "Period", ylab = "Change in mean age")
+title("Time derivative mean age")
+grid()
+```
+
+We can see that mean age of birth rose from about 28 to about 30 over
+the course of these 15 years, an average rate of change of 0.13 per
+year.
+
+* Is rate of postponement speeding up, slowing down, or staying about
+  the same?
+* Do you have some preliminary hypotheses about the role that timing has on 
+  the observed decline in period TFR?
+
+## 1. Period-cohort translation
+
+Translation from periods to cohorts
+
+We'll use the Ryder-inspired translation equation that goes from
+observable period quantities to cohort total fertility 
+(given on page 19 of the reading)
+
+$$
+CTFR(t - \mu_p) \approx TFR(t) \times (1 + \mu'_p(t))
+$$
+
+Estimate cohort TFR using the Ryder-inspired formula
+
+```{r}
+mu_p = mt ## period mean
+mu_p_prime = rt ## time derivative of period mean
+ctfr_hat = tfr * (1 + mu_p_prime) ## ryder-esque formula
+
+## corresponding cohorts
+t <- as.numeric(colnames(fat))
+cohorts <- t - mu_p
+names(ctfr_hat) <- cohorts
+plot(names(ctfr_hat), ctfr_hat, xlab = "Cohort", 
+     ylab = "Estimated CTFR", type = 'o',
+     ylim = c(1.5, 2.5)) ## note: same ylim as with period before
+grid()
+```
+
+* Cohort TFR looks like it's declining too. 
+
+### Comparison of period and cohort
+
+We can divide the Ryder-esque cohort estimates by the period TFR to
+see how much higher the cohort TFR might be. (Note: We're ignoring the 
+date shift here from period to cohort, isolating the $1 + \mu'(t)$ effect)
+
+```{r}
+coh_to_per_ratio <- ctfr_hat/tfr
+names(coh_to_per_ratio) <- names(tfr)
+print(round(coh_to_per_ratio,2))
+```
+Cohort TFR is higher by 5 to 17 percent.
+
+
+### Comparison with extrapolated rates
+
+Let's compare the Ryder-inspired estimate to "observed" cohort TFR. In order 
+to get recent incomplete cohorts (e.g., those that are born after 1980), we'll
+extrapolate recent age-specific rates forward in time (by about 10
+years).
+
+* If the oldest age is 42 and we observe fertility through 2023, what would 
+  be the most recent cohort with completed fertility? 
+  (This is the motivation for doing the extrapolation)
+
+```{r}
+## Extrapolation
+N <- 10 ## number of years we are extrapolating for 
+n_periods = ncol(fat)
+bx <- ( fat[,n_periods] - fat[,n_periods - 5] ) / 5 ## rate of change calculated from most recent five years
+fat_forward = fat[,n_periods] + cbind(bx) %*% rbind(1:N) ## extrapolate based on this rate of change staying constant in the future for N years
+colnames(fat_forward) <- paste(max(as.numeric(colnames(fat))) + 1:N)
+## now combine observed (form distant past) and extrapolation
+fat_extended = cbind(fat_all[rownames(fat),], fat_forward)
+```
+
+Plot the extrapolated period rates.
+
+```{r}
+matplot(colnames(fat), t(fat), type='l', xlim = c(2008, 2035), xlab = "Period", 
+        ylab = "ASFR", lty = 1)
+matlines(colnames(fat_extended), t(fat_extended), lty = 2)
+title("Linear Extrapolation of Period Age-Specific Fertility Rates")
+```
+
+* Looks pretty reasonable, right?
+
+Now calculate cohort TFR
+
+```{r}
+## transform to a cohort matrix
+fac_extended <- per2coh(fat_extended)
+fac_extended <- remove.na.columns(fac_extended)
+
+## compute CTFR of observed and extrapolated rates
+ctfr_obs = colSums(fac_extended)
+
+## compare "observed" and "translated"
+plot(names(ctfr_obs), ctfr_obs, lty = 1, type = 'l',
+     ylim = c(1, 3), lwd = 2,
+     xlim = c(1970, 2000),
+     xlab = "Cohort",
+     ylab = "CTFR",
+     main = "Cohort total fertility")
+points(cohorts, ctfr_hat, lty = 2, cex = .6)
+grid()
+
+## we can also compare this to the "uninflated" period tfr
+points(cohorts, colSums(fat), cex = .6, col = 'red')
+
+legend("topright", c("obs CTFR",
+                     "translated CTFR",
+                     "PTFR"),
+       lwd = c(2, -1, -1),
+       cex = .6,
+       pch = c(-1,1,1),
+       col = c("black", "black", "red"),
+       bty = "n")
+
+```
+
+How is the "translation" approach doing?
+* fine "on average" (for about 1986)
+* a bit too high at the beginning (when period fertility from 2008 is 
+  being translated) 
+* a bit too low at the end (when period fertility from 2023 is 
+  being translated)
+
+What else do we notice?
+* cohort is about .2 children higher than period TFR (about 10%)
+* the decline in period fertility is accompanied by a similar decline 
+  in cohort fertility
+
+Note: For recent cohorts our "observed" CTFR has quite a bit of
+extrapolation.
+
+Optional question (if we have time): 
+
+* What would be some ways to get a *more robust* estimate of cohort
+total fertility from recent period rates? (Hint: which quantities are
+most unstable from one period to the next?)
+
+
+## 2. Period shift modeling
+
+### Tempo-adjusted period fertility
+
+Our Bongaarts-Feeney formula for "tempo-adjusted TFR" is
+$$
+TFR^*(t) = {TFR(t) \over 1 - \mu'_p(t)}
+$$
+
+This is easy to implement, since we've already calculated all of the
+ingredients.
+
+```{r}
+tfr_adj = tfr / (1 - rt)
+```
+
+We can plot this and see how it compares to the observed TFR.
+
+```{r}
+t = names(tfr)
+plot(t, tfr, type = 'l', ylim = c(1.5, 2.5))
+lines(t, tfr_adj, lty = 2)
+legend("topright", c("tfr", "tfr_adj"),
+       lty = 1:2)
+grid()
+```
+
+The tempo-adjusted TFR has several features
+
+a. Most importantly, it is larger than the observed TFR (for this time
+      period in the USA).
+
+b. It bounces about somewhat from year to year
+
+c. Discuss if the following is TRUE:
+
+	> The tempo-adjusted TFR* has declined at about the same rate as the
+     observed TFR. This means that it doesn't appear that an
+     acceleration of postponement is responsible for the recent
+     declines in fertility
+
+###  Consistency with change in age-specific schedules
+
+The Bongaarts-Feeney model is a counter-factual measure, which has no
+"truth" to which it can be compared. It tells us what observed period
+fertility would have been in the absence of postponement, assuming
+that postponement took the form of a uniform delay (by age) in
+fertility from one period to the next.
+
+We can assess the plausibility of such shifts, however, by looking at
+what pattern of age-specific change would be consistent with the
+Bongaarts-Feeney model. The Goldstein and Cassidy chapter tells us
+that an age-period surface of fertility consistent with the
+Bongaarts-Feeney model is given by:
+
+$$
+f(a,t) = f_0(a - R(t)) \times (1-R'(t)) \times q(t),
+$$
+where $R(t)$ is the total number of years by which women in year $t$ have shifted their fertility, $R'(t)$ is
+the rate of shift in year $t$, and $q(t)$ is the period "quantum",
+equal to the tempo-adjusted fertility $TFR^*(t)$. 
+
+###  Numerical optimization 
+
+We can estimate all of the parameters of this model using numerical
+optimization. In R, one way to do this is the nlm() function. The way
+optimization works is that the computer tries different values of the
+parameters until it finds the "best" ones. In this case, the "best" is
+defined by parameters  $q_t$, $f_0$, and $R_t$ that produce estimates
+$\hat{f}(a,t)$ that are close to the observed fertility rates.
+
+First we define the function that implements the period shift model.
+
+```{r}
+get_fat_bf <- function(qt, f0, Rt)
+{
+    ## period-shift estimated fertility surface f(a,t) from parameters
+    ## -- shifts all ages of period at once
+    ## -- indices without names
+
+    ## get rt (time derivative of Rt)
+    rt = center.diff(Rt, end.fill = T)
+
+    ## initialize empty period matrix
+    fat_hat <- matrix(NA, nrow(fat), ncol(fat))
+    dimnames(fat_hat) <- dimnames(fat)
+    a <- as.numeric(names(f0))
+
+    ## new spline function
+    f0_spline <- splinefun(x = a, y = f0, method = "natural")
+    
+    ## fill up empty matrix with shifted f0`
+    for (i in 1:ncol(fat)) ## each period
+    {
+        ## rule 2, just extrapolates edge values
+        ## a problem if ages start late or end early
+        ## this_shifted_fat <-
+        ##      approx(x = a, y = f0,
+        ##             xout = a - Rt[i], rule = 2)$y
+        shifted_a = a - Rt[i]
+        this_shifted_fat <- f0_spline(shifted_a)
+
+        fat_hat[,i] <- this_shifted_fat * (1 - rt[i])
+    }
+    ## multiply by qt (using diag trick)
+    fat_hat <- fat_hat %*% diag(qt)
+
+    ## return fat_hat
+    return(fat_hat)
+}
+```
+
+Then, we'll define the "objective" function that will tell us how close
+our estimated fertility rates are to the observed ones:
+
+```{r}
+ob_fun_f0_qt_Rt <- function(p)
+{
+    ## objective function for cohort shift model
+    
+    ## get latest version of parameters
+    n_a <- length(f0_start)
+    n_t <- length(qt_start)
+    f0 = exp(p[1:n_a])
+    f0 <- f0/sum(f0) ## normalize
+    qt = exp(p[(n_a + 1):(n_a + n_t)])
+    Rt = p[(n_a + n_t + 1):length(p)]
+    names(Rt) <- names(Rt_start)
+    names(f0) <- names(f0_start)
+    names(qt) <- names(qt_start)
+
+    ## get the f(a,t) implied by these parameters
+    fat_hat = get_fat_bf(qt, f0, Rt) ## implied period shift f(a,t)
+    dimnames(fat_hat) <- dimnames(fat)
+
+    ## define loss  and return it (to optimizer)
+    loss = sum((fat-fat_hat)^2) ## sum of squared errors
+    return(loss)
+}
+```
+
+Now we can use the optimizer. This involves starting with some
+reasonable guesses at the parameter values and running nlm().
+
+```{r}
+## starting values
+## -- f0
+f0_start <- rowMeans(fat)
+f0_start = f0_start/sum(f0_start) ## normalized
+## -- qt
+tfr <- colSums(fat)
+qt_start <- tfr
+## -- Rt
+mu_t <- apply(fat, 2, get.mean)
+Rt_start <- mu_t - mean(mu_t)
+
+
+## optimizer (this takes a while!)
+p_start = c(log(f0_start), log(qt_start), Rt_start)
+fit = nlm(p = p_start,
+          f = ob_fun_f0_qt_Rt, print.level = 1,
+          iterlim = 1000)
+fit_bf = fit
+```
+
+Plot parameter estimates. The first section of the plot (between the first two 
+dashed lines) shows optimized values for $log(f_0)$, the second section shows 
+estimates for $log(q_t)$, and the third shows estimates for $log(R_t)$. 
+The log scale is used here so that we ensure values for $f_0$, $q_t$, and $R_t$ 
+are greater than 0. 
+
+```{r}
+## plot estimates
+plot(fit$est,
+       xlab = "Index in Parameter Vector",
+       ylab = "Parameter Value")
+abline(v = cumsum(c(1, length(f0_start),
+                    length(qt_start),
+                    length(Rt_start))),
+       lty = 2
+       )
+```
+
+Compare fitted to observed $f(a,t)$
+
+```{r} 
+fit = fit_bf
+f0_hat = exp(fit$est[1:length(f0_start)])
+qt_hat = exp(fit$est[(length(f0_start) + 1):(length(f0_start) + length(qt_start))])
+qt_hat_bf = qt_hat
+Rt_hat = fit$est[(length(f0_start) + length(qt_start) + 1):length(fit$est)]
+## normalize
+f0_hat = f0_hat/sum(f0_hat)
+
+
+names(f0_hat) <- names(f0_start)
+names(qt_hat) <- names(qt_start)
+names(Rt_hat) <- names(Rt_start)
+
+
+fat_hat = get_fat_bf(qt = qt_hat, f0 = f0_hat, Rt = Rt_hat)
+colnames(fat_hat) <- colnames(fat)
+
+a <- rownames(fat)
+par(mfrow = c(2,2))
+plot(a, fat[,"2010"], cex = .6, pch = 19)
+lines(a, fat_hat[,"2010"], lty = 2)
+title("2010")
+##
+plot(a, fat[,"2016"], col = 2, , cex = .6, pch = 19)
+lines(a, fat_hat[,"2016"], lty = 2, col = 2)
+title("2016")
+##
+plot(a, fat[,"2022"], col = 3, cex = .6, pch = 19)
+lines(a, fat_hat[,"2022"], lty = 2, col = 3)
+title("2022")
+## 
+my_periods = paste(c("2010", "2016", "2022"))
+matplot(a, fat[, my_periods], lty = 1, type = 'p', pch = 10, cex = .6)
+matlines(a, fat_hat[, my_periods], lty = 2)
+title("All three periods")
+```
+
+Looks like a very good fit.
+
+
+Check against Bongaarts-Feeney tempo-adjusted TFR
+
+```{r}
+par(mfrow = c(1,1))
+plot(t, tfr, ylim = c(1, 3), xlab = "Year", ylab = "TFR")
+lines(t, tfr_adj, lty = 2)
+lines(t, qt_hat_bf, lty = 2, col = 'red')
+legend("topright", 
+       c("observed tfr", "adj tfr (bongaarts-feeney)", 
+         "adj tfr (optimization)"),
+       col = c("black", "black", "red"),
+       lty = c(-1, 2, 2),
+       pch = c(1,-1,-1),)
+```
+
+Good match?
+
+## 3. Cohort shift modeling
+
+###  Estimation of cohort shift model
+
+The cohort shift model is given by
+$$
+f(a,t) = f_0(a - S(t-a)) \times q(t),
+$$
+where $f_0$ is a baseline fertility schedule, normalized to add up to
+1.0, $a - S(t-a)$ is the shifted age for each cohort $t-a$, and $q(t)$
+is the quantum of fertility in the absence of shifts, in this case
+Goldstein and Cassidy's $TFR^\dagger$.
+
+Once again, we can estimate all of the parameters of the model using numerical
+optimization. 
+
+First we define the function that implements our cohort shift model
+
+```{r}
+get_fat_gc <- function(qt, f0, Sc)
+{
+    ## cohort-shift estimated fertility surface f(a,t) from parameters
+    ## -- shifts all ages of cohort at once
+    ## -- indices without names
+    ## -- converts back to period
+
+    ## initialize empty cohort matrix
+    fac_hat <- matrix(NA, nrow(fac), ncol(fac))
+    dimnames(fac_hat) <- dimnames(fac)
+    a <- as.numeric(names(f0))
+
+    ## new spline function
+    f0_spline <- splinefun(x = a, y = f0, method = "natural")
+
+    
+    ## fill up empty matrix with shifted f0
+    for (i in 1:ncol(fac)) ## each cohort
+    {
+        ## old:
+        ## rule 2, just extrapolates edge values
+        ## a problem if ages start late or end early
+        ## this_shifted_fac <-
+        ##      approx(x = a, y = f0,
+        ##             xout = a - Sc[i], rule = 2)$y
+
+        ## new: 
+        shifted_a = a - Sc[i]
+        this_shifted_fac <- f0_spline(shifted_a)
+
+        fac_hat[,i] <- this_shifted_fac
+    }
+    ## convert to period
+    fat_hat <- coh2per(fac_hat)
+    fat_hat <- fat_hat[, colnames(fat)] ## keep period range
+    
+    ## multiply by qt (using diag trick)
+    fat_hat <- fat_hat %*% diag(qt)
+
+    ## return fat_hat
+    return(fat_hat)
+}
+```
+
+Then, we'll define the "objective" function that will tell us how close
+our estimated fertility rates are to the observed ones:
+
+```{r}
+ob_fun_f0_qt_Sc <- function(p)
+{
+    ## objective function for cohort shift model
+    
+    ## get latest version of parameters
+    n_a <- length(f0_start)
+    n_t <- length(qt_start)
+    f0 = exp(p[1:n_a])
+    f0 <- f0/sum(f0) ## normalize
+    qt = exp(p[(n_a + 1):(n_a + n_t)])
+    Sc = p[(n_a + n_t + 1):length(p)]
+    names(Sc) <- names(Sc_start)
+    names(f0) <- names(f0_start)
+    names(qt) <- names(qt_start)
+
+    ## get the f(a,t) implied by these parameters
+    fat_hat = get_fat_gc(qt, f0, Sc) ## implied cohort shift f(a,t)
+    dimnames(fat_hat) <- dimnames(fat)
+
+    ## define loss  and return it (to optimizer)
+    loss = sum((fat-fat_hat)^2) ## sum of squared errors 
+    return(loss)
+}
+```
+
+Again, we'll use the optimizer, nlm(). 
+
+First, we'll introduce a faster utility function to speed things
+up. Don't worry about how this works :)
+
+```{r}
+## faster coh2per
+coh2per_fast_minimal <- function(Acoh) {
+  a_vals <- as.integer(rownames(Acoh))
+  c_vals <- as.integer(colnames(Acoh))
+
+  n_age <- length(a_vals)
+  n_coh <- length(c_vals)
+
+  t_vals <- outer(a_vals, c_vals, `+`)
+  f_vals <- Acoh
+
+  t_range <- range(t_vals)
+  t_seq <- t_range[1]:t_range[2]
+
+  Aper <- matrix(NA_real_, nrow = n_age, ncol = length(t_seq),
+                 dimnames = list(as.character(a_vals), as.character(t_seq)))
+
+  Aper[cbind(rep(seq_len(n_age), n_coh), as.integer(t_vals - t_seq[1] + 1))] <- f_vals
+  ## +1 is because indexing doesn't start at 0 in R
+
+  Aper
+}
+coh2per <- coh2per_fast_minimal
+```
+
+
+
+```{r}
+fac <- per2coh(fat)
+fac <- remove.na.columns(fac)
+## starting values
+## -- f0
+f0_start <- rowMeans(fat)
+f0_start = f0_start/sum(f0_start) ## normalized
+## -- qt
+tfr <- colSums(fat)
+qt_start <- tfr
+## -- Sc from Rt
+mu_t <- apply(fat, 2, get.mean)
+Rt <- mu_t - mean(mu_t)
+#plot(Rt)
+Sc_start <- approx(x = names(Rt),
+                   y = Rt,
+                   xout = as.numeric(colnames(fac)) + 30,
+                   rule = 2)$y
+names(Sc_start) <- colnames(fac)
+
+## optimizer (this takes a while!)
+p_start = c(log(f0_start), log(qt_start), Sc_start)
+if(!exists("gc_fit"))
+{
+    fit = nlm(p = p_start,
+              f = ob_fun_f0_qt_Sc, print.level = 1,
+              iterlim = 1000)
+    gc_fit = fit
+}
+print(gc_fit)
+```
+
+And we'll plot the parameter estimates, $log(f_0)$, $log(q_t)$, and $S_c$. 
+
+```{r}
+plot(fit$est)
+abline(v = cumsum(c(1, length(f0_start),
+                    length(qt_start),
+                    length(Sc_start))),
+       lty = 2)
+```
+
+A cleaner visualization of each parameter separately
+```{r}
+p_hat = gc_fit$estimate
+n_a = length(f0_start)
+n_t = length(qt_start)
+n_c = length(Sc_start)
+year = names(qt_start)
+age = names(f0_start)
+cohort = names(Sc_start)
+f0_hat = exp(p_hat[1:n_a])
+## normalize f0_hat!!! 
+f0_hat = f0_hat/sum(f0_hat)
+qt_hat = exp(p_hat[(n_a + 1):(n_a + n_t)])
+Sc_hat = p_hat[(n_a + n_t + 1):length(p_hat)]
+## apply names
+names(Sc_hat) <- names(Sc_start)
+names(f0_hat) <- names(f0_start)
+names(qt_hat) <- names(qt_start)
+plot(age, f0_hat, type = 'o', col = 'red',
+     main = "Estimated cohort age-density f_0(a)",
+     ylab = "Proportion")
+grid()
+```
+
+```{r}
+plot(cohort, Sc_hat, col = 'red',
+     main = "Estimated cohort shifts S(c)",
+     ylab = "Cumulative years of postponement")
+grid()
+```
+
+```{r}
+plot(year, qt_hat, type = 'o', col = 'red', ylim = c(1, 3),
+     main = "Estimated period quantum vs. TFR",
+     ylab = "Children per woman")
+lines(year, tfr)
+grid()
+```
+
+
+
+
+### Compare fitted to observed $f(a,t)$
+
+```{r} 
+fat_hat = get_fat_gc(qt = qt_hat, f0 = f0_hat, Sc = Sc_hat)
+dimnames(fat_hat) <- dimnames(fat)
+sum((fat_hat - fat)^2)
+## [1] 0.001652185
+```
+
+Plot results 
+
+```{r}
+a <- rownames(fat)
+par(mfrow = c(2,2))
+plot(a, fat[,"2010"], cex = .6, pch = 19)
+lines(a, fat_hat[,"2010"], lty = 2)
+title("2010")
+##
+plot(a, fat[,"2016"], col = 2, , cex = .6, pch = 19)
+lines(a, fat_hat[,"2016"], lty = 2, col = 2)
+title("2016")
+##
+plot(a, fat[,"2022"], col = 3, cex = .6, pch = 19)
+lines(a, fat_hat[,"2022"], lty = 2, col = 3)
+title("2022")
+## 
+my_periods = paste(c("2010", "2016", "2022"))
+matplot(a, fat[, my_periods], lty = 1, type = 'p', pch = 10, cex = .6)
+matlines(a, fat_hat[, my_periods], lty = 2)
+title("All three periods")
+```
+
+Ok, this also looks very good.
+
+### Comparison of observed TFR with period- and cohort-tempo-adjusted measures
+
+
+```{r}
+par(mfrow = c(1,1))
+plot(t, tfr, type = 'p', ylim = c(1.5, 2.5))
+lines(t, qt_hat_gc, col = 'blue', lty=2)
+lines(t, qt_hat_bf, col = 'red', lty=2)
+legend("topright",
+       c("tfr", "period-tempo-adjusted tfr",
+         "cohort-tempo-adjusted tfr"),
+       col = c("black", "red", "blue"),
+       lty = c(-1, 2, 2),
+       pch = c(1, -1, -1))
+grid()
+```
+
+
+Questions: 
+
+1. (important) Does either the period-shift or cohort-shift model give any reason to
+   believe that postponement (or perhaps changes in the rate of
+   postponement) is behind the recent drop in fertility?
+   
+2. (important) Is the recent drop in fertility below age 25 consistent with period
+   shifts and/or, cohort shifts?
+   
+3. (optional) What would the cohort TFR look like if we plotted it at the time
+   when the cohort reaches its mean age of childbearing? (Hint: very much
+   like one of these lines -- which one?) 
+   
+4. (optional) What might we be missing by looking at fertility of all parities at
+   once rather than doing a parity specific analysis?
+   
+5. (optional) What about the cohort model makes it more difficult to estimate?
+
+a. the incompleteness of cohorts means we can't just estimate changes
+in the mean in a simple way
+b. period changes in fertility levels q(t) influence cohort age
+schedules. So, we need to estimate q and f0 at the same time.
+c. both a & b
+d. something else entirely?
+
+
+## 4. Group exercises/project
+
+Here's a plot of TFR in a number of HFD countries. Pick one of these
+countries to analyze. 
+
+```{r}
+dt <- fread("./asfrRR.txt")
+
+tfr.dt <- dt[Year %in% 2008:2023, .(tfr = sum(ASFR)), by = .(Code, Year)]
+
+my_codes <- c("CAN", 
+    "ESP",
+    "FIN", "JPN", "KOR",
+    "NOR", "SWE", "USA") 
+tfr.mat <- tfr.dt[Code %in% my_codes, 
+                  xtabs(tfr ~ Code + Year)]
+tfr.mat[tfr.mat == 0] <- NA
+matplot(2008:2023, t(tfr.mat), type = 'l', lty = c(1),
+        col = 1:7, xlim = c(2007, 2023),
+        xlab = "Year",
+        ylab = "Period TFR",
+        main = "Recent TFRs of selected HFD countries")
+grid()
+text(x = 2008, y = tfr.mat[,"2008"],
+     pos = 2,
+     rownames(tfr.mat),
+     col = 1:7)
+```
+
+(a) Repeat some or all of the analysis we did in the USA for your country,
+applying Ryder, Bongaarts-Feeney, and Goldstein-Cassidy approaches. Do changes
+in timing appear to be behind recent fertility decline? Pick your most 
+informative graphic to share.
+
+(b) (optional) Try something else of your own invention with the
+observed age-specific rates f(a,t) for your country in order to shed
+light on the nature of the how fertility is declining in that country.
+
+(c) (required) Discuss whether you think the following statement is
+true for your country: 
+
+> "The fact that fertility decline is occuring mostly at younger ages,
+with little to no offsetting increase at older ages, means that fertility 
+is being foregone, not just delayed."
+
+
+
