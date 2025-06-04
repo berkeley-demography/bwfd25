@@ -712,6 +712,9 @@ f0_hat = exp(p_hat[1:n_a])
 f0_hat = f0_hat/sum(f0_hat)
 qt_hat = exp(p_hat[(n_a + 1):(n_a + n_t)])
 Sc_hat = p_hat[(n_a + n_t + 1):length(p_hat)]
+## save _gc versions for later comparisons
+qt_hat_gc = qt_hat 
+f0_hat_gc = f0_hat
 ## apply names
 names(Sc_hat) <- names(Sc_start)
 names(f0_hat) <- names(f0_start)
